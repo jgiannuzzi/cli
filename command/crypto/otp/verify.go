@@ -11,6 +11,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/pquerna/otp"
+	"github.com/pquerna/otp/hotp"
 	"github.com/pquerna/otp/totp"
 	"github.com/smallstep/cli/errs"
 	"github.com/smallstep/cli/flags"
@@ -26,11 +27,20 @@ func verifyCommand() cli.Command {
 		UsageText: `**step crypto otp verify** [**--secret**=<path>]
 [**--period**=<seconds>] [**--skew**=<num>] [**--length**=<size>]
 [**--alg**=<alg>] [*--time**=<time|duration>]`,
-		Description: `**step crypto otp verify** does TOTP and HTOP`,
+		Description: `**step crypto otp verify** does TOTP and HOTP`,
 		Flags: []cli.Flag{
 			cli.StringFlag{
+				Name:  "t,type",
+				Usage: `Type of OTP. Must be one of: TOTP, HOTP`,
+			},
+			cli.StringFlag{
 				Name:  "secret",
-				Usage: `Path to file containing TOTP secret.`,
+				Usage: `Path to file containing OTP secret.`,
+			},
+			cli.Uint64Flag{
+				Name:  "counter",
+				Usage: "HOTP counter. Defaults to 0.",
+				Value: 0,
 			},
 			cli.UintFlag{
 				Name: "period",
@@ -76,10 +86,15 @@ func verifyAction(ctx *cli.Context) error {
 	var (
 		secret string
 		// defaults
-		period = uint(30)
-		digits = 6
-		algStr = "SHA1"
+		counter = uint64(0)
+		period  = uint(30)
+		digits  = 6
+		algStr  = "SHA1"
 	)
+
+	if len(ctx.String("type")) == 0 {
+		return errs.RequiredFlag(ctx, "type")
+	}
 
 	secretFile := ctx.String("secret")
 	if len(secretFile) == 0 {
@@ -97,12 +112,12 @@ func verifyAction(ctx *cli.Context) error {
 	if strings.HasPrefix(secret, "otpauth://") {
 		otpKey, err := otp.NewKeyFromURL(secret)
 		if err != nil {
-			return errors.Wrap(err, "error parsing TOTP key from URL")
+			return errors.Wrap(err, "error parsing OTP key from URL")
 		}
 
 		u, err := url.Parse(strings.TrimSpace(secret))
 		if err != nil {
-			return errors.Wrap(err, "error parsing TOTP Key URI in secret file")
+			return errors.Wrap(err, "error parsing OTP Key URI in secret file")
 		}
 		q := u.Query()
 
@@ -130,6 +145,9 @@ func verifyAction(ctx *cli.Context) error {
 		}
 	}
 
+	if ctx.IsSet("counter") {
+		counter = ctx.Uint64("counter")
+	}
 	if ctx.IsSet("period") {
 		period = ctx.Uint("period")
 	}
@@ -166,12 +184,24 @@ func verifyAction(ctx *cli.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "error reading passcode")
 	}
-	valid, err := totp.ValidateCustom(string(passcode), secret, selectTime, totp.ValidateOpts{
-		Period:    period,
-		Skew:      skew,
-		Digits:    otp.Digits(digits),
-		Algorithm: alg,
-	})
+
+	var valid bool
+	switch strings.ToUpper(ctx.String("type")) {
+	case "TOTP":
+		valid, err = totp.ValidateCustom(string(passcode), secret, selectTime, totp.ValidateOpts{
+			Period:    period,
+			Skew:      skew,
+			Digits:    otp.Digits(digits),
+			Algorithm: alg,
+		})
+	case "HOTP":
+		valid, err = hotp.ValidateCustom(string(passcode), counter, secret, hotp.ValidateOpts{
+			Digits:    otp.Digits(digits),
+			Algorithm: alg,
+		})
+	default:
+		return errs.InvalidFlagValue(ctx, "type", ctx.String("type"), "TOTP or HOTP")
+	}
 
 	if err != nil {
 		return errors.Wrap(err, "error while validating TOTP")

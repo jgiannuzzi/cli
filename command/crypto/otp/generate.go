@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/pquerna/otp"
+	"github.com/pquerna/otp/hotp"
 	"github.com/pquerna/otp/totp"
 	"github.com/smallstep/cli/command"
 	"github.com/smallstep/cli/errs"
@@ -23,8 +24,12 @@ func generateCommand() cli.Command {
 		UsageText: `**step crypto otp generate** [**--issuer**=<name>]
 [**--account**=<user-name>] [**--period**=<seconds>] [**--length**=<size>]
 [**--alg**=<alg>] [**--url**] [**--qr**]`,
-		Description: `**step crypto otp generate** does TOTP and HTOP`,
+		Description: `**step crypto otp generate** does TOTP and HOTP`,
 		Flags: []cli.Flag{
+			cli.StringFlag{
+				Name:  "t,type",
+				Usage: `Type of OTP. Must be one of: TOTP, HOTP`,
+			},
 			cli.StringFlag{
 				Name:  "issuer, iss",
 				Usage: `Name of the issuing organization (e.g., smallstep.com)`,
@@ -72,6 +77,8 @@ https://github.com/google/google-authenticator/wiki/Key-Uri-Format`,
 
 func generateAction(ctx *cli.Context) error {
 	switch {
+	case len(ctx.String("type")) == 0:
+		return errs.RequiredFlag(ctx, "type")
 	case len(ctx.String("issuer")) == 0:
 		return errs.RequiredFlag(ctx, "issuer")
 	case len(ctx.String("account")) == 0:
@@ -125,12 +132,26 @@ func generate(ctx *cli.Context) (*otp.Key, error) {
 	if err != nil {
 		return nil, err
 	}
-	return totp.Generate(totp.GenerateOpts{
-		Issuer:      ctx.String("issuer"),
-		AccountName: ctx.String("account"),
-		Period:      uint(ctx.Int("period")),
-		SecretSize:  uint(ctx.Int("secret-size")),
-		Digits:      otp.Digits(ctx.Int("length")),
-		Algorithm:   alg,
-	})
+
+	switch strings.ToUpper(ctx.String("type")) {
+	case "TOTP":
+		return totp.Generate(totp.GenerateOpts{
+			Issuer:      ctx.String("issuer"),
+			AccountName: ctx.String("account"),
+			Period:      uint(ctx.Int("period")),
+			SecretSize:  uint(ctx.Int("secret-size")),
+			Digits:      otp.Digits(ctx.Int("length")),
+			Algorithm:   alg,
+		})
+	case "HOTP":
+		return hotp.Generate(hotp.GenerateOpts{
+			Issuer:      ctx.String("issuer"),
+			AccountName: ctx.String("account"),
+			SecretSize:  uint(ctx.Int("secret-size")),
+			Digits:      otp.Digits(ctx.Int("length")),
+			Algorithm:   alg,
+		})
+	default:
+		return nil, errs.InvalidFlagValue(ctx, "type", ctx.String("type"), "TOTP or HOTP")
+	}
 }
